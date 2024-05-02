@@ -1,0 +1,342 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPTPATH=$( dirname "$(realpath "$0")" )
+
+errecho() {
+    >&2 echo "${@//$'\n'/}"
+}
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')]" "$@"
+}
+
+declare -a kgp_args
+image=major1201/profiler-generic:latest
+container_name=
+output_file=flame.svg
+duration=30
+scheme=perf
+
+display_help() {
+    cat <<EOF
+Usage: kubectl profiler [parameters]
+Parameters:
+  -h,--help          show this help message
+  -n,--namespace     specify namespace
+  -c,--container     specify container name
+  -s,--scheme        specify profiling scheme, choices: [perf(default), bpf, offcpu, page_fault, python]
+  -D,--duration      profiling duration, default 30
+  --image            use a custom image, default: major1201/profiler-generic:latest
+  -o,--output        output file, default: flame.svg
+Examples:
+  # Perform default perf scheme on a pod
+  kubectl profiler -n debug highcpupod
+
+  # Perform bpf scheme on a pod
+  kubectl profiler -n debug highcpupod -s bpf -o /tmp/flame-bpf.svg
+Homepage:
+  <https://github.com/major1201/kubectl-profiler>
+EOF
+}
+
+parse_arguments() {
+    if [[ "$#" = "0" ]]; then
+        display_help
+        exit 1
+    fi
+
+    while :
+    do
+        if [[ "$#" = "0" ]]; then
+            break
+        fi
+
+        # case "${1?cmd must be provided after "--"}" in
+        case "$1" in
+        -h|--help)
+            display_help
+            exit
+        ;;
+        -c|--container)
+            container_name=$2
+            shift 2
+        ;;
+        -n|--namespace)
+            # pass to both kgp and kubectl exec
+            namespace=$2
+            kgp_args+=("$1" "$2")
+            shift 2
+        ;;
+        -s|--scheme)
+            scheme=$2
+            shift 2
+        ;;
+        -D|--duration)
+            duration=$2
+            shift 2
+        ;;
+        --image)
+            image=$2
+            shift 2
+        ;;
+        -o|--output)
+            output_file=$1
+            shift 2
+        ;;
+        *)
+            kgp_args+=("$1")
+            shift
+        ;;
+        esac
+    done
+}
+
+rand() {
+    array=()
+    for i in {a..z} {0..9}; do
+        array["${RANDOM}"]=$i
+    done
+    printf %s "${array[@]::5}" $'\n'
+}
+
+launch_prof_pod() {
+    log "Spawning pod ${prof_pod_name} on ${node_name}..."
+
+    # apply configmap
+    cat <<EOF | kubectl -n "${namespace}" apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${prof_pod_name}-configmap
+data:
+  list_processes: |
+    #!/bin/bash
+    set -euo pipefail
+    for cgpath in "/kubepods" "/kubepods/besteffort" "/kubepods/burstable" "/kubepods/offline-besteffort"; do
+        full_container_path="/sys/fs/cgroup/cpu\${cgpath}/pod\${TARGET_UID}/\${TARGET_CONTAINER}"
+        if [[ -d "\${full_container_path}" ]]; then
+            echo "found cgroup path \${full_container_path}"
+            echo "=========================================="
+            ps -eo pid,cmd | grep -f "\${full_container_path}/cgroup.procs"
+            echo "=========================================="
+            break
+        fi
+    done
+  perf.scheme: |
+    #!/bin/bash
+    set -euo pipefail
+    TARGET_PID=\$1
+    perf record -F99 -p "\${TARGET_PID}" -g -- sleep "\${DURATION}"
+    perf script --header | /opt/FlameGraph/stackcollapse-perf.pl | /opt/FlameGraph/flamegraph.pl > /opt/workspace/flame.svg
+  bpf.scheme: |
+    #!/bin/bash
+    set -euo pipefail
+    TARGET_PID=\$1
+    stackcount-bpfcc -f -p "\${TARGET_PID}" -D "\${DURATION}" ktime_get > out.stackcount01.txt
+    /opt/FlameGraph/flamegraph.pl --hash --bgcolors=grey < ./out.stackcount01.txt > flame.svg
+  offcpu.scheme: |
+    #!/bin/bash
+    set -euo pipefail
+    TARGET_PID=\$1
+    offcputime-bpfcc -fK -p "\${TARGET_PID}" "\${DURATION}" > out.offcputime01.txt
+    /opt/FlameGraph/flamegraph.pl --hash --bgcolors=blue --title="Off-CPU Time Flame Graph" < out.offcputime01.txt > flame.svg
+  page_fault.scheme: |
+    #!/bin/bash
+    set -euo pipefail
+    TARGET_PID=\$1
+    stackcount-bpfcc -f -p "\${TARGET_PID}" -U -D "\${DURATION}" t:exceptions:page_fault_user > out.pagefaults01.txt
+    /opt/FlameGraph/flamegraph.pl --hash --width=800 --title="Page Fault Flame Graph" --colors=java --bgcolor=green < out.pagefaults01.txt > flame.svg
+  python.scheme: |
+    #!/bin/bash
+    set -euo pipefail
+    TARGET_PID=\$1
+    py-spy record -p "\${TARGET_PID}" -d "\${DURATION}" -o flame.svg
+EOF
+
+    overrides="$(cat <<EOF
+{
+    "spec": {
+        "containers": [
+            {
+                "name": "main",
+                "image": "${image}",
+                "command": ["sleep", "inf"],
+                "env": [
+                    {
+                        "name": "TARGET_UID",
+                        "value": "${pod_uid}"
+                    },
+                    {
+                        "name": "TARGET_CONTAINER",
+                        "value": "${container_id}"
+                    },
+                    {
+                        "name": "DURATION",
+                        "value": "${duration}"
+                    }
+                ],
+                "securityContext": {
+                    "privileged": true
+                },
+                "volumeMounts": [
+                    {
+                        "mountPath": "/sys",
+                        "name": "sys",
+                        "readOnly": true
+                    },
+                    {
+                        "name": "sys-run",
+                        "mountPath": "/run"
+                    },
+                    {
+                        "name": "sys-runlock",
+                        "mountPath": "/run/lock"
+                    },
+                    {
+                        "name": "tmp",
+                        "mountPath": "/tmp"
+                    },
+                    {
+                        "name": "lib-modules",
+                        "mountPath": "/lib/modules",
+                        "readOnly": true
+                    },
+                    {
+                        "name": "usr-src",
+                        "mountPath": "/usr/src",
+                        "readOnly": true
+                    },
+                    {
+                        "name": "schemes",
+                        "mountPath": "/schemes"
+                    }
+                ]
+            }
+        ],
+        "tolerations": [{"operator": "Exists"}],
+        "hostPID": true,
+        "nodeName": "${node_name}",
+        "volumes": [
+            {
+                "name": "sys",
+                "hostPath": {
+                    "path": "/sys"
+                }
+            },
+            {
+                "name": "sys-run",
+                "emptyDir": {
+                    "medium": "Memory"
+                }
+            },
+            {
+                "name": "sys-runlock",
+                "emptyDir": {
+                    "medium": "Memory"
+                }
+            },
+            {
+                "name": "tmp",
+                "hostPath": {
+                    "path": "/tmp"
+                }
+            },
+            {
+                "name": "lib-modules",
+                "hostPath": {
+                    "path": "/lib/modules"
+                }
+            },
+            {
+                "name": "usr-src",
+                "hostPath": {
+                    "path": "/usr/src"
+                }
+            },
+            {
+                "name": "schemes",
+                "configMap": {
+                    "name": "${prof_pod_name}-configmap",
+                    "defaultMode": 448
+                }
+            }
+        ]
+    }
+}
+EOF
+    )"
+
+    kubectl run -n "${namespace}" --image "${image}" --restart=Never --overrides="${overrides}" "${prof_pod_name}"
+
+    log "pod created, waiting for ready (timeout 5min)..."
+
+    for i in {1..300}; do
+        sleep 1
+        prof_pod_status=$(kubectl get pod -n "${namespace}" "${prof_pod_name}" -o json | jq -r '.status.containerStatuses[0].ready')
+        if [[ "${prof_pod_status}" = "true" ]]; then
+            log "prof pod ready."
+            break
+        fi
+    done
+}
+
+cleanup_prof_pod() {
+    kubectl delete configmap --wait=false -n "${namespace}" "${prof_pod_name}-configmap" || true
+    kubectl delete pod --wait=false -n "${namespace}" "${prof_pod_name}" || true
+}
+
+main() {
+    parse_arguments "$@"
+
+    pod_json=$(kubectl get pod "${kgp_args[@]}" -o json)
+
+    # get namespace
+    if [[ -z "${namespace}" ]]; then
+        namespace=$(echo "${pod_json}" | jq -r '.metadata.namespace')
+    fi
+
+    # get node name
+    node_name=$(echo "${pod_json}" | jq -r '.spec.nodeName')
+    if [[ -z "${node_name}" ]]; then
+        errecho "pod is not scheduled"
+        return 1
+    fi
+    log "node_name=${node_name}"
+
+    # get uid
+    pod_uid=$(echo "${pod_json}" | jq -r '.metadata.uid')
+    log "uid=${pod_uid}"
+
+    # get container id
+    if [[ -z "${container_name}" ]]; then
+        container_id=$(echo "${pod_json}" | jq -r '.status.containerStatuses[0].containerID')
+    else
+        container_id=$(echo "${pod_json}" | jq --arg CONTAINER "${container_name}" -r '.status.containerStatuses[] | select(.name==$CONTAINER).containerID')
+    fi
+    container_id=${container_id##*/}
+    if [[ -z "${container_id}" ]]; then
+        errecho "container not found"
+        return 1
+    fi
+    log "container_id=${container_id}"
+
+    # launch prof job pod
+    prof_pod_name=prof-$(rand)
+    trap cleanup_prof_pod EXIT
+    launch_prof_pod
+
+    log "listing container processes"
+    kubectl exec -n "${namespace}" "${prof_pod_name}" -- /schemes/list_processes
+
+    read -r -p ">>> Select the exact pid: " target_pid
+
+    log "performing ${scheme} scheme..."
+    kubectl exec -it -n "${namespace}" "${prof_pod_name}" -- bash -c "/schemes/${scheme}.scheme ${target_pid}"
+
+    log "downloading flame graph..."
+    kubectl cp -n "${namespace}" "${prof_pod_name}":/opt/workspace/flame.svg "${output_file}"
+}
+
+main "$@"

@@ -1,0 +1,24 @@
+apiVersion: krew.googlecontainertools.github.com/v1alpha2
+kind: Plugin
+metadata:
+  name: profiler
+spec:
+  version: "{{ .TagName }}"
+  homepage: https://github.com/major1201/kubectl-profiler
+  shortDescription: "Run profiler and generate flame graph"
+  description: Run profiler and generate flame graph(perf, bpf, offcpu, etc.) on a process of a container with kubectl plugin
+  platforms:
+  - selector:
+      matchExpressions:
+      - key: "os"
+        operator: "In"
+        values:
+        - darwin
+        - linux
+    {{addURIAndSha "https://github.com/major1201/kubectl-profiler/archive/refs/tags/{{ .TagName }}.tar.gz" .TagName }}
+    files:
+    - from: "kubectl-profiler-*/kubectl-profiler"
+      to: "."
+    - from: "kubectl-profiler-*/LICENSE"
+      to: "."
+    bin: kubectl-profiler
