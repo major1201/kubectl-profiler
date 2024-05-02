@@ -16,17 +16,6 @@ git clone https://github.com/major1201/kubectl-profiler.git
 ln -s ./kubectl-profiler /usr/local/bin/kubectl-profiler
 ```
 
-### Krew
-
-Make sure you've already installed [krew](https://github.com/kubernetes-sigs/krew) (a kubectl plugin manager).
-
-```bash
-kubectl krew index add kubectl-profiler https://github.com/major1201/kubectl-profiler
-kubectl krew search kubectl-profiler
-kubectl krew install kubectl-profiler/profiler
-kubectl profiler --help
-```
-
 ## Usage
 
 ```
