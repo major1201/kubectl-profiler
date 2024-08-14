@@ -82,7 +82,7 @@ parse_arguments() {
             shift 2
         ;;
         -o|--output)
-            output_file=$1
+            output_file=$2
             shift 2
         ;;
         *)
@@ -129,25 +129,25 @@ data:
     set -euo pipefail
     TARGET_PID=\$1
     perf record -F99 -p "\${TARGET_PID}" -g -- sleep "\${DURATION}"
-    perf script --header | /opt/FlameGraph/stackcollapse-perf.pl | /opt/FlameGraph/flamegraph.pl > /opt/workspace/flame.svg
+    perf script --header | /opt/FlameGraph/stackcollapse-perf.pl | /opt/FlameGraph/flamegraph.pl --width 2400 --colors blue > /opt/workspace/flame.svg
   bpf.scheme: |
     #!/bin/bash
     set -euo pipefail
     TARGET_PID=\$1
-    stackcount-bpfcc -f -p "\${TARGET_PID}" -D "\${DURATION}" ktime_get > out.stackcount01.txt
-    /opt/FlameGraph/flamegraph.pl --hash --bgcolors=grey < ./out.stackcount01.txt > flame.svg
+    profile-bpfcc -F 99 -adf "\${DURATION}" -p "\${TARGET_PID}" > out.profile-folded
+    /opt/FlameGraph/flamegraph.pl --hash --width 2400 --colors blue ./out.profile-folded > flame.svg
   offcpu.scheme: |
     #!/bin/bash
     set -euo pipefail
     TARGET_PID=\$1
-    offcputime-bpfcc -fK -p "\${TARGET_PID}" "\${DURATION}" > out.offcputime01.txt
-    /opt/FlameGraph/flamegraph.pl --hash --bgcolors=blue --title="Off-CPU Time Flame Graph" < out.offcputime01.txt > flame.svg
+    offcputime-bpfcc -f -p "\${TARGET_PID}" "\${DURATION}" > out.offcputime01.txt
+    /opt/FlameGraph/flamegraph.pl --hash --width 2400 --colors blue --title="Off-CPU Time Flame Graph" < out.offcputime01.txt > flame.svg
   page_fault.scheme: |
     #!/bin/bash
     set -euo pipefail
     TARGET_PID=\$1
     stackcount-bpfcc -f -p "\${TARGET_PID}" -U -D "\${DURATION}" t:exceptions:page_fault_user > out.pagefaults01.txt
-    /opt/FlameGraph/flamegraph.pl --hash --width=800 --title="Page Fault Flame Graph" --colors=java --bgcolor=green < out.pagefaults01.txt > flame.svg
+    /opt/FlameGraph/flamegraph.pl --hash --width=1200 --title="Page Fault Flame Graph" --colors=java --bgcolor=green < out.pagefaults01.txt > flame.svg
   python.scheme: |
     #!/bin/bash
     set -euo pipefail
