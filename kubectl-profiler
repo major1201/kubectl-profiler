@@ -18,6 +18,7 @@ container_name=
 output_file=flame.svg
 duration=30
 scheme=perf
+extra_arguments=""
 
 display_help() {
     cat <<EOF
@@ -30,6 +31,7 @@ Parameters:
   -D,--duration      profiling duration, default 30
   --image            use a custom image, default: major1201/profiler-generic:latest
   -o,--output        output file, default: flame.svg
+  --extra-arguments  append extra perf record arguments
 Examples:
   # Perform default perf scheme on a pod
   kubectl profiler -n debug highcpupod
@@ -85,6 +87,10 @@ parse_arguments() {
             output_file=$2
             shift 2
         ;;
+        --extra-arguments)
+            extra_arguments=$2
+            shift 2
+        ;;
         *)
             kgp_args+=("$1")
             shift
@@ -128,7 +134,7 @@ data:
     #!/bin/bash
     set -euo pipefail
     TARGET_PID=\$1
-    perf record -F99 -p "\${TARGET_PID}" -g -- sleep "\${DURATION}"
+    perf record -F99 -p "\${TARGET_PID}" \${extra_arguments} -g -- sleep "\${DURATION}"
     perf script --header | /opt/FlameGraph/stackcollapse-perf.pl | /opt/FlameGraph/flamegraph.pl --width 2400 --colors blue > /opt/workspace/flame.svg
   bpf.scheme: |
     #!/bin/bash
@@ -333,7 +339,7 @@ main() {
     read -r -p ">>> Select the exact pid: " target_pid
 
     log "performing ${scheme} scheme..."
-    kubectl exec -it -n "${namespace}" "${prof_pod_name}" -- bash -c "/schemes/${scheme}.scheme ${target_pid}"
+    kubectl exec -it -n "${namespace}" "${prof_pod_name}" -- bash -c "export extra_arguments=${extra_arguments@Q}; /schemes/${scheme}.scheme ${target_pid}"
 
     log "downloading flame graph..."
     kubectl cp -n "${namespace}" "${prof_pod_name}":/opt/workspace/flame.svg "${output_file}"

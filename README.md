@@ -28,6 +28,7 @@ Parameters:
   -D,--duration      profiling duration, default 30
   --image            use a custom image, default: major1201/profiler-generic:latest
   -o,--output        output file, default: flame.svg
+  --extra-arguments  append extra perf record arguments
 ```
 
 Examples
@@ -35,6 +36,9 @@ Examples
 ```bash
 # Perform default perf scheme on a pod
 kubectl profiler -n debug highcpupod
+
+# If the previous command didn't work, try forcing perf to use the cpu-clock event
+kubectl profiler -n debug highcpupod --extra-arguments "-e cpu-clock"
 
 # Perform bpf scheme on a pod
 kubectl profiler -n debug highcpupod -s bpf -o /tmp/flame-bpf.svg
