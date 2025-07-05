@@ -27,6 +27,8 @@ Parameters:
   -s,--scheme        specify profiling scheme, choices: [perf(default), bpf, offcpu, page_fault, python]
   -D,--duration      profiling duration, default 30
   --image            use a custom image, default: major1201/profiler-generic:latest
+  -node,--nodename   node name
+  -p,--pid           pid
   -o,--output        output file, default: flame.svg
   --extra-arguments  append extra perf record arguments
 ```
