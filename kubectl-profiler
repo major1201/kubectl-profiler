@@ -16,8 +16,11 @@ declare -a kgp_args
 image="${KUBECTL_PROFILER_IMAGE:-major1201/profiler-generic:latest}"
 container_name=
 output_file=flame.svg
+pod_uid=
+container_id=
 duration=30
 scheme=perf
+namespace=$(kubectl config view --minify -o jsonpath='{..namespace}')
 extra_arguments=""
 
 display_help() {
@@ -30,6 +33,8 @@ Parameters:
   -s,--scheme        specify profiling scheme, choices: [perf(default), bpf, offcpu, page_fault, python]
   -D,--duration      profiling duration, default 30
   --image            (ENV: KUBECTL_PROFILER_IMAGE) use a custom image, default: major1201/profiler-generic:latest
+  -node,--nodename   node name
+  -p,--pid           pid
   -o,--output        output file, default: flame.svg
   --extra-arguments  append extra perf record arguments
 Examples:
@@ -83,6 +88,14 @@ parse_arguments() {
             image=$2
             shift 2
         ;;
+        --nodename)
+            node_name=$2
+            shift 2
+        ;;
+        -p|--pid)
+            target_pid=$2
+            shift 2
+        ;;
         -o|--output)
             output_file=$2
             shift 2
@@ -105,6 +118,17 @@ rand() {
         array["${RANDOM}"]=$i
     done
     printf %s "${array[@]::5}" $'\n'
+}
+
+retry() {
+    retry_time=${TRY_TIME=3}
+
+    for (( n=0; n<retry_time; n++ )); do
+        if (( n > 0 )); then
+            log "retrying (${n})"
+        fi
+        "$@" && break
+    done
 }
 
 launch_prof_pod() {
@@ -296,53 +320,61 @@ cleanup_prof_pod() {
 main() {
     parse_arguments "$@"
 
-    pod_json=$(kubectl get pod "${kgp_args[@]}" -o json)
-
-    # get namespace
-    if [[ -z "${namespace}" ]]; then
-        namespace=$(echo "${pod_json}" | jq -r '.metadata.namespace')
-    fi
-
-    # get node name
-    node_name=$(echo "${pod_json}" | jq -r '.spec.nodeName')
     if [[ -z "${node_name}" ]]; then
-        errecho "pod is not scheduled"
-        return 1
-    fi
-    log "node_name=${node_name}"
+        pod_json=$(kubectl get pod "${kgp_args[@]}" -o json)
 
-    # get uid
-    pod_uid=$(echo "${pod_json}" | jq -r '.metadata.uid')
-    log "uid=${pod_uid}"
+        # get namespace
+        if [[ -z "${namespace}" ]]; then
+            namespace=$(echo "${pod_json}" | jq -r '.metadata.namespace')
+        fi
 
-    # get container id
-    if [[ -z "${container_name}" ]]; then
-        container_id=$(echo "${pod_json}" | jq -r '.status.containerStatuses[0].containerID')
-    else
-        container_id=$(echo "${pod_json}" | jq --arg CONTAINER "${container_name}" -r '.status.containerStatuses[] | select(.name==$CONTAINER).containerID')
+        # get node name
+        node_name=$(echo "${pod_json}" | jq -r '.spec.nodeName')
+        if [[ -z "${node_name}" ]]; then
+            errecho "pod is not scheduled"
+            return 1
+        fi
+        log "node_name=${node_name}"
+
+        # get uid
+        pod_uid=$(echo "${pod_json}" | jq -r '.metadata.uid')
+        log "uid=${pod_uid}"
+
+        # get container id
+        if [[ -z "${container_name}" ]]; then
+            container_id=$(echo "${pod_json}" | jq -r '.status.containerStatuses[0].containerID')
+        else
+            container_id=$(echo "${pod_json}" | jq --arg CONTAINER "${container_name}" -r '.status.containerStatuses[] | select(.name==$CONTAINER).containerID')
+        fi
+        container_id=${container_id##*/}
+        if [[ -z "${container_id}" ]]; then
+            errecho "container not found"
+            return 1
+        fi
+        log "container_id=${container_id}"
     fi
-    container_id=${container_id##*/}
-    if [[ -z "${container_id}" ]]; then
-        errecho "container not found"
-        return 1
-    fi
-    log "container_id=${container_id}"
 
     # launch prof job pod
     prof_pod_name=prof-$(rand)
     trap cleanup_prof_pod EXIT
     launch_prof_pod
 
-    log "listing container processes"
-    kubectl exec -n "${namespace}" "${prof_pod_name}" -- /schemes/list_processes
+    if [[ -z "${target_pid}" ]]; then
+        log "listing container processes"
+        kubectl exec -n "${namespace}" "${prof_pod_name}" -- /schemes/list_processes
 
-    read -r -p ">>> Select the exact pid: " target_pid
+        read -r -p ">>> Select the exact pid: " target_pid
+    fi
 
     log "performing ${scheme} scheme..."
     kubectl exec -it -n "${namespace}" "${prof_pod_name}" -- bash -c "export extra_arguments=${extra_arguments@Q}; /schemes/${scheme}.scheme ${target_pid}"
 
     log "downloading flame graph..."
-    kubectl cp -n "${namespace}" "${prof_pod_name}":/opt/workspace/flame.svg "${output_file}"
+    retry kubectl cp -n "${namespace}" "${prof_pod_name}":/opt/workspace/flame.svg "${output_file}" || (
+        log "download failed, please try do yourself"
+        log "waiting 1 day"
+        sleep 1d
+    )
 }
 
 main "$@"
