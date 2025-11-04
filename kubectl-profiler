@@ -148,7 +148,7 @@ data:
     set -euo pipefail
     full_container_path=\$(find /sys/fs/cgroup/cpu/ -name '*'"\${TARGET_CONTAINER}" | head -n1)
     if [[ -d "\${full_container_path}" ]]; then
-        log "found cgroup path \${full_container_path}"
+        echo "found cgroup path \${full_container_path}"
         echo "=========================================="
         ps -eo pid,cmd | grep -f "\${full_container_path}/cgroup.procs"
         echo "=========================================="
