@@ -146,7 +146,7 @@ data:
   list_processes: |
     #!/bin/bash
     set -euo pipefail
-    full_container_path=\$(find /sys/fs/cgroup/cpu/ -name '*'"\${TARGET_CONTAINER}" | head -n1)
+    full_container_path=\$(find /sys/fs/cgroup/cpu/ -name '*'"\${TARGET_CONTAINER}"'*' | head -n1)
     if [[ -d "\${full_container_path}" ]]; then
         echo "found cgroup path \${full_container_path}"
         echo "=========================================="
@@ -157,7 +157,7 @@ data:
     #!/bin/bash
     set -euo pipefail
     TARGET_PID=\$1
-    perf record -F99 -p "\${TARGET_PID}" \${extra_arguments} -g -- sleep "\${DURATION}"
+    perf record -F99 -p "\${TARGET_PID}" \${extra_arguments} -g --proc-map-timeout 1000 -- sleep "\${DURATION}"
     perf script --header | /opt/FlameGraph/stackcollapse-perf.pl | /opt/FlameGraph/flamegraph.pl --width 2400 --colors blue > /opt/workspace/flame.svg
   bpf.scheme: |
     #!/bin/bash
