@@ -28,6 +28,7 @@ Parameters:
   -D,--duration       profiling duration, default 30
   --image             use a custom image, default: major1201/profiler-generic:latest
   --image-pull-secret (ENV: KUBECTL_PROFILER_IMAGE_PULL_SECRET) specify a pull secret in the profiler pod's namespace
+  --labels            (ENV: KUBECTL_PROFILER_LABELS) label the profiler pod, format: key=value,key2=value2
   -node,--nodename    node name
   -p,--pid            pid
   -o,--output         output file, default: flame.svg
@@ -39,6 +40,9 @@ Examples
 ```bash
 # Perform default perf scheme on a pod
 kubectl profiler -n debug highcpupod
+
+# Label the profiler pod
+kubectl profiler -n debug highcpupod --labels 'app=profiler,team=platform'
 
 # Pull a private profiler image using an existing Secret in the debug namespace
 kubectl profiler -n debug highcpupod --image registry.example.com/profiler:latest --image-pull-secret registry-creds

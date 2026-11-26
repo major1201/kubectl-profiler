@@ -15,6 +15,7 @@ log() {
 declare -a kgp_args
 image="${KUBECTL_PROFILER_IMAGE:-major1201/profiler-generic:latest}"
 image_pull_secret="${KUBECTL_PROFILER_IMAGE_PULL_SECRET:-}"
+labels="${KUBECTL_PROFILER_LABELS:-}"
 container_name=
 output_file=flame.svg
 pod_uid=
@@ -37,6 +38,7 @@ Parameters:
   -D,--duration       profiling duration, default 30
   --image             (ENV: KUBECTL_PROFILER_IMAGE) use a custom image, default: major1201/profiler-generic:latest
   --image-pull-secret (ENV: KUBECTL_PROFILER_IMAGE_PULL_SECRET) specify a pull secret in the profiler pod's namespace
+  --labels            (ENV: KUBECTL_PROFILER_LABELS) label the profiler pod, format: key=value,key2=value2
   -node,--nodename    node name
   -p,--pid            pid
   -o,--output         output file, default: flame.svg
@@ -94,6 +96,10 @@ parse_arguments() {
         ;;
         --image-pull-secret)
             image_pull_secret=$2
+            shift 2
+        ;;
+        --labels)
+            labels=$2
             shift 2
         ;;
         --nodename)
@@ -315,7 +321,11 @@ EOF
 EOF
     )"
 
-    kubectl run -n "${namespace}" --image "${image}" --restart=Never --overrides="${overrides}" "${prof_pod_name}"
+    local run_args=(-n "${namespace}" --image "${image}" --restart=Never --overrides="${overrides}")
+    if [[ -n "${labels}" ]]; then
+        run_args+=(--labels "${labels}")
+    fi
+    kubectl run "${run_args[@]}" "${prof_pod_name}"
 
     log "pod created, waiting for ready (timeout 5min)..."
 
