@@ -21,16 +21,17 @@ ln -s ./kubectl-profiler /usr/local/bin/kubectl-profiler
 ```
 Usage: kubectl profiler [parameters]
 Parameters:
-  -h,--help          show this help message
-  -n,--namespace     specify namespace
-  -c,--container     specify container name
-  -s,--scheme        specify profiling scheme, choices: [perf(default), bpf, offcpu, page_fault, python]
-  -D,--duration      profiling duration, default 30
-  --image            use a custom image, default: major1201/profiler-generic:latest
-  -node,--nodename   node name
-  -p,--pid           pid
-  -o,--output        output file, default: flame.svg
-  --extra-arguments  append extra perf record arguments
+  -h,--help           show this help message
+  -n,--namespace      specify namespace
+  -c,--container      specify container name
+  -s,--scheme         specify profiling scheme, choices: [perf(default), bpf, offcpu, page_fault, python]
+  -D,--duration       profiling duration, default 30
+  --image             use a custom image, default: major1201/profiler-generic:latest
+  --image-pull-secret (ENV: KUBECTL_PROFILER_IMAGE_PULL_SECRET) specify a pull secret in the profiler pod's namespace
+  -node,--nodename    node name
+  -p,--pid            pid
+  -o,--output         output file, default: flame.svg
+  --extra-arguments   append extra perf record arguments
 ```
 
 Examples
@@ -38,6 +39,9 @@ Examples
 ```bash
 # Perform default perf scheme on a pod
 kubectl profiler -n debug highcpupod
+
+# Pull a private profiler image using an existing Secret in the debug namespace
+kubectl profiler -n debug highcpupod --image registry.example.com/profiler:latest --image-pull-secret registry-creds
 
 # If the previous command didn't work, try forcing perf to use the cpu-clock event
 kubectl profiler -n debug highcpupod --extra-arguments "-e cpu-clock"

@@ -14,6 +14,7 @@ log() {
 
 declare -a kgp_args
 image="${KUBECTL_PROFILER_IMAGE:-major1201/profiler-generic:latest}"
+image_pull_secret="${KUBECTL_PROFILER_IMAGE_PULL_SECRET:-}"
 container_name=
 output_file=flame.svg
 pod_uid=
@@ -29,16 +30,17 @@ display_help() {
     cat <<EOF
 Usage: kubectl profiler [parameters]
 Parameters:
-  -h,--help          show this help message
-  -n,--namespace     specify namespace
-  -c,--container     specify container name
-  -s,--scheme        specify profiling scheme, choices: [perf(default), bpf, offcpu, page_fault, python]
-  -D,--duration      profiling duration, default 30
-  --image            (ENV: KUBECTL_PROFILER_IMAGE) use a custom image, default: major1201/profiler-generic:latest
-  -node,--nodename   node name
-  -p,--pid           pid
-  -o,--output        output file, default: flame.svg
-  --extra-arguments  append extra perf record arguments
+  -h,--help           show this help message
+  -n,--namespace      specify namespace
+  -c,--container      specify container name
+  -s,--scheme         specify profiling scheme, choices: [perf(default), bpf, offcpu, page_fault, python]
+  -D,--duration       profiling duration, default 30
+  --image             (ENV: KUBECTL_PROFILER_IMAGE) use a custom image, default: major1201/profiler-generic:latest
+  --image-pull-secret (ENV: KUBECTL_PROFILER_IMAGE_PULL_SECRET) specify a pull secret in the profiler pod's namespace
+  -node,--nodename    node name
+  -p,--pid            pid
+  -o,--output         output file, default: flame.svg
+  --extra-arguments   append extra perf record arguments
 Examples:
   # Perform default perf scheme on a pod
   kubectl profiler -n debug highcpupod
@@ -90,6 +92,10 @@ parse_arguments() {
             image=$2
             shift 2
         ;;
+        --image-pull-secret)
+            image_pull_secret=$2
+            shift 2
+        ;;
         --nodename)
             node_name=$2
             shift 2
@@ -134,6 +140,12 @@ retry() {
 }
 
 launch_prof_pod() {
+    local image_pull_secrets=""
+    if [[ -n "${image_pull_secret}" ]]; then
+        image_pull_secrets=$(jq -cn --arg name "${image_pull_secret}" '[{name: $name}]')
+        image_pull_secrets="\"imagePullSecrets\": ${image_pull_secrets},"
+    fi
+
     log "Spawning pod ${prof_pod_name} on ${node_name}..."
 
     # apply configmap
@@ -187,6 +199,7 @@ EOF
     overrides="$(cat <<EOF
 {
     "spec": {
+        ${image_pull_secrets}
         "containers": [
             {
                 "name": "main",
